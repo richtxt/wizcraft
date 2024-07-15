@@ -5,6 +5,21 @@ let jumping = false, jumpVelocity = 0, gravity = -9.8, jumpStrength = 5;
 let particles = [];
 let lastSpawnTime = 0;
 const spawnInterval = 3000; // spawn every 3 seconds
+let lastAttackTime = 0;
+let attackCooldown = 1000; // 1000 milliseconds (1 second) between attacks by default
+let currentWeapon = {
+    name: "Default Blaster",
+    cooldown: 1000,
+    damage: 10,
+    particleCount: 3
+};
+let mouseY = 0;
+let mouseX = 0;
+let targetRotation = 0;
+let isPointerLocked = false;
+const mouseSensitivity = 0.002; // Adjust this value to change mouse sensitivity
+let isAttacking = false;
+
 
 function init() {
     scene = new THREE.Scene();
@@ -46,7 +61,50 @@ function init() {
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     document.getElementById('jumpButton').addEventListener('click', startJump);
-    document.getElementById('attackButton').addEventListener('click', attack);
+    document.getElementById('attackButton').addEventListener('mousedown', startAttack);
+    document.getElementById('attackButton').addEventListener('mouseup', stopAttack);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
+
+    renderer.domElement.addEventListener('click', () => {
+        renderer.domElement.requestPointerLock();
+    });
+}
+
+function onMouseMove(event) {
+    if (isPointerLocked) {
+        // Add minus sign to reverse the direction
+        let movementX = -(event.movementX || event.mozMovementX || event.webkitMovementX || 0);
+        
+        player.rotation.y += movementX * mouseSensitivity;
+
+        // Normalize the rotation
+        player.rotation.y = player.rotation.y % (Math.PI * 2);
+        if (player.rotation.y < 0) {
+            player.rotation.y += Math.PI * 2;
+        }
+    }
+}
+
+function onMouseDown(event) {
+    if (event.button === 0) { // Left mouse button
+        if (!isPointerLocked) {
+            renderer.domElement.requestPointerLock();
+        }
+        startAttack();
+    }
+}
+
+function onMouseUp(event) {
+    if (event.button === 0) { // Left mouse button
+        stopAttack();
+    }
+}
+
+function onPointerLockChange() {
+    isPointerLocked = document.pointerLockElement === renderer.domElement;
 }
 
 function spawnEnemy() {
@@ -102,20 +160,14 @@ function onKeyDown(event) {
         case 'KeyD':
             strafeRight = true;
             break;
-        case 'ArrowLeft':
-            rotateLeft = true;
-            break;
-        case 'ArrowRight':
-            rotateRight = true;
-            break;
         case 'Space':
             startJump();
             break;
         case 'ControlLeft':
-        case 'ControlRight':
-            attack();
-            break;
-    }
+            case 'ControlRight':
+                startAttack();
+                break;
+        }
 }
 
 function onKeyUp(event) {
@@ -134,13 +186,11 @@ function onKeyUp(event) {
         case 'KeyD':
             strafeRight = false;
             break;
-        case 'ArrowLeft':
-            rotateLeft = false;
-            break;
-        case 'ArrowRight':
-            rotateRight = false;
-            break;
-    }
+        case 'ControlLeft':
+            case 'ControlRight':
+                stopAttack();
+                break;
+        }
 }
 
 function startJump() {
@@ -150,8 +200,22 @@ function startJump() {
     }
 }
 
-function attack() {
-    const particleCount = 3;
+function startAttack() {
+    isAttacking = true;
+}
+
+function stopAttack() {
+    isAttacking = false;
+}
+
+function attack(time) {
+    if (!isAttacking) return;
+    const currentTime = Date.now();
+    if (currentTime - lastAttackTime < attackCooldown) return;
+
+    lastAttackTime = currentTime;
+
+    const particleCount = currentWeapon.particleCount;
     const spread = Math.PI / 4; // 45 degree spread
     const speed = 10;
     const lifespan = 3; // seconds
@@ -169,7 +233,8 @@ function attack() {
         particle.velocity = direction.multiplyScalar(speed);
         particle.bounces = 5; // Increased number of bounces
         particle.lifespan = lifespan;
-        particle.creation = Date.now() / 1000;
+        particle.creation = currentTime / 1000;
+        particle.damage = currentWeapon.damage;
 
         scene.add(particle);
         particles.push(particle);
@@ -203,7 +268,7 @@ function updateParticles(deltaTime) {
         // Check collision with enemies
         enemies.forEach(enemy => {
             if (checkCollision(particle, enemy)) {
-                enemy.health -= 10; // Decrease health
+                enemy.health -= particle.damage; // Use the particle's damage
                 updateHealthBar(enemy);
                 scene.remove(particle);
                 return false;
@@ -231,12 +296,7 @@ function updateHealthBar(enemy) {
 
 function updatePlayer(deltaTime) {
     const speed = 5;
-    const rotationSpeed = 2;
     const oldPosition = player.position.clone();
-
-    // Rotation
-    if (rotateLeft) player.rotation.y += rotationSpeed * deltaTime;
-    if (rotateRight) player.rotation.y -= rotationSpeed * deltaTime;
 
     // Movement
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
@@ -293,6 +353,7 @@ function checkCollision(obj1, obj2) {
 }
 
 let lastTime = 0;
+
 function animate(time) {
     const deltaTime = (time - lastTime) / 1000;
     lastTime = time;
@@ -307,7 +368,37 @@ function animate(time) {
     updatePlayer(deltaTime);
     updateEnemies(deltaTime);
     updateParticles(deltaTime);
+    
+    attack(time);
+    
     renderer.render(scene, camera);
+}
+
+function changeWeapon(newWeapon) {
+    currentWeapon = newWeapon;
+    attackCooldown = currentWeapon.cooldown;
+}
+
+function pickupWeapon(weaponType) {
+    switch(weaponType) {
+        case 'fastBlaster':
+            changeWeapon({
+                name: "Fast Blaster",
+                cooldown: 500, // 0.5 seconds
+                damage: 5,
+                particleCount: 2
+            });
+            break;
+        case 'heavyCannon':
+            changeWeapon({
+                name: "Heavy Cannon",
+                cooldown: 2000, // 2 seconds
+                damage: 30,
+                particleCount: 1
+            });
+            break;
+        // Add more weapon types as needed
+    }
 }
 
 init();
