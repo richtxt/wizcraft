@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Map Editor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #editor-container {
+            display: flex;
+            gap: 20px;
+        }
+        #tools {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        canvas {
+            border: 1px solid black;
+        }
+        .tool-button {
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .active {
+            background-color: #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>Visual Map Editor</h1>
+    <div id="editor-container">
+        <div id="tools">
+            <h3>Layers</h3>
+            <button class="tool-button active" data-layer="terrain">Terrain</button>
+            <button class="tool-button" data-layer="objects">Objects</button>
+            
+            <h3>Terrain Types</h3>
+            <button class="tool-button" data-tool="grass">Grass</button>
+            <button class="tool-button" data-tool="water">Water</button>
+            <button class="tool-button" data-tool="sand">Sand</button>
+            <button class="tool-button" data-tool="forest">Forest</button>
+            
+            <h3>Objects</h3>
+            <button class="tool-button" data-tool="tree">Tree</button>
+            <button class="tool-button" data-tool="rock">Rock</button>
+            <button class="tool-button" data-tool="enemy">Enemy</button>
+            
+            <h3>Actions</h3>
+            <button id="clearBtn">Clear Map</button>
+            <button id="saveBtn">Save Map</button>
+            <button id="loadBtn">Load Map</button>
+        </div>
+        <canvas id="mapCanvas" width="800" height="600"></canvas>
+    </div>
+    <input type="file" id="loadFile" style="display: none;" accept=".json">
+
+    <script type="module">
+        import { MapEditorTool } from '../js/MapEditorTool.js';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const mapEditor = new MapEditorTool('mapCanvas', 20, 15);
+
+            // Set up event listeners for your UI buttons
+            document.getElementById('clearBtn').addEventListener('click', () => mapEditor.clearMap());
+            document.getElementById('saveBtn').addEventListener('click', () => mapEditor.saveMap('myMap'));
+            document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('loadFile').click());
+
+            document.getElementById('loadFile').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const mapData = JSON.parse(e.target.result);
+                        mapEditor.loadMap(mapData);
+                    };
+                    reader.readAsText(file);
+                }
+            });
+
+            // Set up event listeners for layer and tool selection
+            document.querySelectorAll('.tool-button').forEach(button => {
+                button.addEventListener('click', () => {
+                    if (button.dataset.layer) {
+                        mapEditor.setCurrentLayer(button.dataset.layer);
+                    } else if (button.dataset.tool) {
+                        mapEditor.setCurrentTool(button.dataset.tool);
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

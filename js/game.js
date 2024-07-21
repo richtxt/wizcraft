@@ -1,405 +1,283 @@
-let scene, camera, renderer, player, ground, enemies = [];
-let playerBox;
-let moveForward = false, moveBackward = false, strafeLeft = false, strafeRight = false, rotateLeft = false, rotateRight = false;
-let jumping = false, jumpVelocity = 0, gravity = -9.8, jumpStrength = 5;
-let particles = [];
-let lastSpawnTime = 0;
-const spawnInterval = 3000; // spawn every 3 seconds
-let lastAttackTime = 0;
-let attackCooldown = 1000; // 1000 milliseconds (1 second) between attacks by default
-let currentWeapon = {
-    name: "Default Blaster",
-    cooldown: 1000,
-    damage: 10,
-    particleCount: 3
-};
-let mouseY = 0;
-let mouseX = 0;
-let targetRotation = 0;
-let isPointerLocked = false;
-const mouseSensitivity = 0.002; // Adjust this value to change mouse sensitivity
-let isAttacking = false;
+import * as THREE from 'three';
+import { Player } from './components/Player.js';
+import { RenderSystem } from './systems/RenderSystem.js';
+import { InputSystem } from './systems/InputSystem.js';
+import { PhysicsSystem } from './systems/PhysicsSystem.js';
+import { CollisionSystem } from './systems/CollisionSystem.js';
+import { GameStateManager } from './managers/GameStateManager.js';
+import { InventoryManager } from './managers/InventoryManager.js';
+import { ParticleManager } from './managers/ParticleManager.js';
+import { JewelManager } from './managers/JewelManager.js';
+import { MapGenerator } from './systems/MapGenerator.js';
+import { MapLoader } from './map/MapLoader.js';
+import { MapRenderer } from './map/MapRenderer.js';
+import { FloatingTextSystem } from './systems/FloatingTextSystem.js';
 
+export class Game {
+    constructor() {
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.renderer = new THREE.WebGLRenderer();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(this.renderer.domElement);
 
-function init() {
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+        this.mapLoader = new MapLoader();
+        this.mapRenderer = new MapRenderer(this.scene);
 
-    // Player
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-    player = new THREE.Mesh(geometry, material);
-    player.position.y = 0.5;
-    scene.add(player);
+        this.gameStateManager = new GameStateManager(this.scene, this.player, this.jewelManager);
+        this.floatingTextSystem = new FloatingTextSystem(this.scene, this.camera);
+        this.particleManager = new ParticleManager(this.scene, this.camera, this.floatingTextSystem, this.gameStateManager);
 
-    // Add a visual indicator for player direction
-    const indicatorGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.6);
-    const indicatorMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
-    const indicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
-    indicator.position.z = -0.5;  // Place it at the front of the player
-    player.add(indicator);
-
-    // Ground
-    const groundGeometry = new THREE.PlaneGeometry(50, 50);
-    const groundMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.DoubleSide });
-    ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = Math.PI / 2;
-    scene.add(ground);
-
-    // Initial camera position
-    updateCameraPosition();
-
-    // AABB box for player
-    const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-    const boxMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true });
-    playerBox = new THREE.Mesh(boxGeometry, boxMaterial);
-    scene.add(playerBox);
-
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('keyup', onKeyUp);
-    document.getElementById('jumpButton').addEventListener('click', startJump);
-    document.getElementById('attackButton').addEventListener('mousedown', startAttack);
-    document.getElementById('attackButton').addEventListener('mouseup', stopAttack);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('mouseup', onMouseUp);
-    document.addEventListener('pointerlockchange', onPointerLockChange);
-
-    renderer.domElement.addEventListener('click', () => {
-        renderer.domElement.requestPointerLock();
-    });
-}
-
-function onMouseMove(event) {
-    if (isPointerLocked) {
-        // Add minus sign to reverse the direction
-        let movementX = -(event.movementX || event.mozMovementX || event.webkitMovementX || 0);
-        
-        player.rotation.y += movementX * mouseSensitivity;
-
-        // Normalize the rotation
-        player.rotation.y = player.rotation.y % (Math.PI * 2);
-        if (player.rotation.y < 0) {
-            player.rotation.y += Math.PI * 2;
-        }
+        this.setupScene();
+        this.addDebugObjects();
+        this.initializeGame();
+        this.setupEventListeners();
     }
-}
 
-function onMouseDown(event) {
-    if (event.button === 0) { // Left mouse button
-        if (!isPointerLocked) {
-            renderer.domElement.requestPointerLock();
-        }
-        startAttack();
+    setupScene() {
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        this.scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(0, 1, 0);
+        this.scene.add(directionalLight);
+
+        this.addDebugObjects();
+
+        this.camera.position.set(0, 5, 10);
+        this.camera.lookAt(this.scene.position);
     }
-}
 
-function onMouseUp(event) {
-    if (event.button === 0) { // Left mouse button
-        stopAttack();
+    addDebugObjects() {
+        // Add a grid helper
+        const gridSize = Math.max(this.mapData.width, this.mapData.height);
+        const gridHelper = new THREE.GridHelper(gridSize, gridSize);
+        this.scene.add(gridHelper);
+
+        // Add axes helper
+        const axesHelper = new THREE.AxesHelper(5);
+        this.scene.add(axesHelper);
+
+        console.log("Debug objects added to scene");
+        console.log("Scene children after adding debug objects:", this.scene.children);
     }
-}
 
-function onPointerLockChange() {
-    isPointerLocked = document.pointerLockElement === renderer.domElement;
-}
-
-function spawnEnemy() {
-    const enemyGeometry = new THREE.BoxGeometry(1, 2, 1);
-    const enemyMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-    const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
-    
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 25; // Half of the ground size
-    enemy.position.set(
-        Math.cos(angle) * radius,
-        1, // Half of the enemy height
-        Math.sin(angle) * radius
-    );
-    
-    enemy.health = 100; // Full health
-
-    // Health bar
-    const healthBarGeometry = new THREE.BoxGeometry(1, 0.1, 0.1);
-    const healthBarMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-    const healthBar = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
-    healthBar.position.y = 1.2; // Slightly above the enemy
-    enemy.add(healthBar);
-    enemy.healthBar = healthBar;
-
-    scene.add(enemy);
-    enemies.push(enemy);
-}
-
-function updateCameraPosition() {
-    const cameraOffset = new THREE.Vector3(0, 3, 8);
-    camera.position.copy(player.position).add(cameraOffset.applyQuaternion(player.quaternion));
-    
-    const targetY = player.position.y + (window.innerHeight / 3) * (camera.position.y - player.position.y) / window.innerHeight;
-    
-    const lookAtPoint = new THREE.Vector3(player.position.x, targetY, player.position.z);
-    camera.lookAt(lookAtPoint);
-}
-
-function onKeyDown(event) {
-    switch (event.code) {
-        case 'ArrowUp':
-        case 'KeyW':
-            moveForward = true;
-            break;
-        case 'ArrowDown':
-        case 'KeyS':
-            moveBackward = true;
-            break;
-        case 'KeyA':
-            strafeLeft = true;
-            break;
-        case 'KeyD':
-            strafeRight = true;
-            break;
-        case 'Space':
-            startJump();
-            break;
-        case 'ControlLeft':
-            case 'ControlRight':
-                startAttack();
-                break;
-        }
-}
-
-function onKeyUp(event) {
-    switch (event.code) {
-        case 'ArrowUp':
-        case 'KeyW':
-            moveForward = false;
-            break;
-        case 'ArrowDown':
-        case 'KeyS':
-            moveBackward = false;
-            break;
-        case 'KeyA':
-            strafeLeft = false;
-            break;
-        case 'KeyD':
-            strafeRight = false;
-            break;
-        case 'ControlLeft':
-            case 'ControlRight':
-                stopAttack();
-                break;
-        }
-}
-
-function startJump() {
-    if (!jumping) {
-        jumping = true;
-        jumpVelocity = jumpStrength;
-    }
-}
-
-function startAttack() {
-    isAttacking = true;
-}
-
-function stopAttack() {
-    isAttacking = false;
-}
-
-function attack(time) {
-    if (!isAttacking) return;
-    const currentTime = Date.now();
-    if (currentTime - lastAttackTime < attackCooldown) return;
-
-    lastAttackTime = currentTime;
-
-    const particleCount = currentWeapon.particleCount;
-    const spread = Math.PI / 4; // 45 degree spread
-    const speed = 10;
-    const lifespan = 3; // seconds
-
-    for (let i = 0; i < particleCount; i++) {
-        const angle = (i / (particleCount - 1) - 0.5) * spread;
-        const direction = new THREE.Vector3(
-            Math.sin(angle),
-            0.2,
-            -Math.cos(angle)
-        ).applyQuaternion(player.quaternion);
-
-        const particle = createParticle();
-        particle.position.copy(player.position);
-        particle.velocity = direction.multiplyScalar(speed);
-        particle.bounces = 5; // Increased number of bounces
-        particle.lifespan = lifespan;
-        particle.creation = currentTime / 1000;
-        particle.damage = currentWeapon.damage;
-
-        scene.add(particle);
-        particles.push(particle);
-    }
-}
-
-function createParticle() {
-    const geometry = new THREE.SphereGeometry(0.1, 16, 16);
-    const material = new THREE.MeshBasicMaterial({ 
-        color: 0x00ffff,
-        transparent: true,
-        opacity: 0.7
-    });
-    return new THREE.Mesh(geometry, material);
-}
-
-function updateParticles(deltaTime) {
-    const currentTime = Date.now() / 1000;
-    particles = particles.filter(particle => {
-        particle.position.add(particle.velocity.clone().multiplyScalar(deltaTime));
-        particle.velocity.y += gravity * deltaTime;
-
-        if (particle.position.y <= 0.1 && particle.bounces > 0) {
-            particle.velocity.y = -particle.velocity.y * 0.8; // Increased bounciness
-            particle.bounces--;
-        }
-
-        const age = currentTime - particle.creation;
-        particle.material.opacity = 0.7 * (1 - age / particle.lifespan);
-
-        // Check collision with enemies
-        enemies.forEach(enemy => {
-            if (checkCollision(particle, enemy)) {
-                enemy.health -= particle.damage; // Use the particle's damage
-                updateHealthBar(enemy);
-                scene.remove(particle);
-                return false;
+    async loadMap(mapName) {
+        try {
+            const mapData = await this.mapLoader.loadMap(mapName);
+            this.mapRenderer.renderMap(mapData);
+            
+            // Reposition player if necessary
+            if (mapData.playerStart) {
+                this.player.setPosition(mapData.playerStart.x, mapData.playerStart.y, mapData.playerStart.z);
             }
-        });
 
-        if (age > particle.lifespan) {
-            scene.remove(particle);
-            return false;
-        }
-        return true;
-    });
-}
-
-function updateHealthBar(enemy) {
-    const healthPercent = Math.max(enemy.health / 100, 0);
-    enemy.healthBar.scale.x = healthPercent;
-    enemy.healthBar.material.color.setHSL(healthPercent / 3, 1, 0.5);
-    
-    if (enemy.health <= 0) {
-        scene.remove(enemy);
-        enemies = enemies.filter(e => e !== enemy);
-    }
-}
-
-function updatePlayer(deltaTime) {
-    const speed = 5;
-    const oldPosition = player.position.clone();
-
-    // Movement
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
-
-    if (moveForward) player.position.add(forward.multiplyScalar(speed * deltaTime));
-    if (moveBackward) player.position.sub(forward.multiplyScalar(speed * deltaTime));
-    if (strafeLeft) player.position.sub(right.multiplyScalar(speed * deltaTime));
-    if (strafeRight) player.position.add(right.multiplyScalar(speed * deltaTime));
-
-    // Apply jump physics
-    if (jumping) {
-        player.position.y += jumpVelocity * deltaTime;
-        jumpVelocity += gravity * deltaTime;
-
-        if (player.position.y <= 0.5) {
-            player.position.y = 0.5;
-            jumping = false;
-            jumpVelocity = 0;
+            console.log("Map loaded, player position:", this.player.getPosition());
+        } catch (error) {
+            console.error(`Failed to load map: ${mapName}`, error);
         }
     }
 
-    // Check collisions with enemies
-    for (let i = 0; i < enemies.length; i++) {
-        if (checkCollision(player, enemies[i])) {
-            player.position.copy(oldPosition);
-            break;
+    renderMap() {
+        // Clear existing map objects
+        // (You'll need to implement this based on how you're managing game objects)
+        this.clearMap();
+
+        // Render terrain
+        for (let y = 0; y < this.currentMap.height; y++) {
+            for (let x = 0; x < this.currentMap.width; x++) {
+                const terrainType = this.currentMap.terrain[y][x];
+                this.createTerrainTile(x, y, terrainType);
+            }
+        }
+
+        // Render objects
+        for (const obj of this.currentMap.objects) {
+            this.createMapObject(obj.type, obj.x, obj.y);
         }
     }
 
-    // Update camera
-    updateCameraPosition();
-
-    // Update AABB box for player
-    playerBox.position.copy(player.position);
-    playerBox.rotation.copy(player.rotation);
-}
-
-function updateEnemies(deltaTime) {
-    const speed = 1; // Slow movement speed
-    enemies.forEach(enemy => {
-        const direction = new THREE.Vector3()
-            .subVectors(player.position, enemy.position)
-            .normalize();
-        enemy.position.add(direction.multiplyScalar(speed * deltaTime));
-        enemy.lookAt(player.position);
-    });
-}
-
-function checkCollision(obj1, obj2) {
-    const box1 = new THREE.Box3().setFromObject(obj1);
-    const box2 = new THREE.Box3().setFromObject(obj2);
-    return box1.intersectsBox(box2);
-}
-
-let lastTime = 0;
-
-function animate(time) {
-    const deltaTime = (time - lastTime) / 1000;
-    lastTime = time;
-
-    // Spawn enemies periodically
-    if (time - lastSpawnTime > spawnInterval) {
-        spawnEnemy();
-        lastSpawnTime = time;
+    createTerrainTile(x, y, type) {
+        // Create a mesh for the terrain tile
+        const geometry = new THREE.PlaneGeometry(1, 1);
+        const material = new THREE.MeshBasicMaterial({ color: this.getTerrainColor(type) });
+        const tile = new THREE.Mesh(geometry, material);
+        tile.rotation.x = -Math.PI / 2;
+        tile.position.set(x, 0, y);
+        this.scene.add(tile);
     }
 
-    requestAnimationFrame(animate);
-    updatePlayer(deltaTime);
-    updateEnemies(deltaTime);
-    updateParticles(deltaTime);
-    
-    attack(time);
-    
-    renderer.render(scene, camera);
-}
+    createMapObject(type, x, y) {
+        // Create a mesh for the map object
+        let geometry, material;
+        switch (type) {
+            case 'tree':
+                geometry = new THREE.ConeGeometry(0.5, 1, 8);
+                material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                break;
+            case 'rock':
+                geometry = new THREE.SphereGeometry(0.5, 8, 8);
+                material = new THREE.MeshBasicMaterial({ color: 0x888888 });
+                break;
+            case 'enemy':
+                geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+                material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                break;
+            default:
+                console.warn(`Unknown object type: ${type}`);
+                return;
+        }
+        const object = new THREE.Mesh(geometry, material);
+        object.position.set(x, 0.5, y);
+        this.scene.add(object);
+    }
 
-function changeWeapon(newWeapon) {
-    currentWeapon = newWeapon;
-    attackCooldown = currentWeapon.cooldown;
-}
+    getTerrainColor(type) {
+        switch (type) {
+            case 0: return 0x00ff00; // Grass
+            case 1: return 0x0000ff; // Water
+            case 2: return 0xffff00; // Sand
+            default: return 0x888888; // Default gray
+        }
+    }
 
-function pickupWeapon(weaponType) {
-    switch(weaponType) {
-        case 'fastBlaster':
-            changeWeapon({
-                name: "Fast Blaster",
-                cooldown: 500, // 0.5 seconds
-                damage: 5,
-                particleCount: 2
-            });
-            break;
-        case 'heavyCannon':
-            changeWeapon({
-                name: "Heavy Cannon",
-                cooldown: 2000, // 2 seconds
-                damage: 30,
-                particleCount: 1
-            });
-            break;
-        // Add more weapon types as needed
+    clearMap() {
+        // Remove all current map objects from the scene
+        // This is a simple implementation; you might need a more sophisticated
+        // approach depending on how you're managing game objects
+        while (this.scene.children.length > 0) {
+            this.scene.remove(this.scene.children[0]);
+        }
+    }
+
+    async initializeGame() {
+        // Initialize managers
+        this.inventoryManager = new InventoryManager();
+        this.jewelManager = new JewelManager(this.scene, null, this.inventoryManager); // We'll set player later
+    
+        // Initialize player
+        this.player = new Player(this.scene, null, this.inventoryManager); // We'll set particleManager later
+        this.player.setPosition(0, 1, 0); // Set initial position
+        console.log("Player initialized:", this.player);
+    
+        // Initialize game state manager
+        this.gameStateManager = new GameStateManager(this.scene, this.player, this.jewelManager);
+        console.log("GameStateManager initialized:", this.gameStateManager);
+    
+        // Initialize floating text system
+        this.floatingTextSystem = new FloatingTextSystem(this.scene, this.camera);
+        console.log("FloatingTextSystem initialized:", this.floatingTextSystem);
+    
+        // Initialize particle manager
+        this.particleManager = new ParticleManager(this.scene, this.camera, this.floatingTextSystem, this.gameStateManager);
+        console.log("ParticleManager initialized:", this.particleManager);
+    
+        // Set particle manager for player and jewel manager
+        this.player.setParticleManager(this.particleManager);
+        this.jewelManager.setPlayer(this.player);
+    
+        // Initialize other systems
+        this.renderSystem = new RenderSystem(this.scene, this.camera, this.renderer);
+        this.physicsSystem = new PhysicsSystem();
+        this.collisionSystem = new CollisionSystem();
+        this.inputSystem = new InputSystem(this.player, this.camera, this.renderer);
+    
+        // Load initial map
+        await this.loadMap("myFirstMap.json");
+    
+        // Ensure camera is positioned correctly after map load
+        this.updateCameraPosition();
+    
+        console.log("Game initialization complete");
+        console.log("Scene children after initialization:", this.scene.children);
+    }
+
+    setupEventListeners() {
+        window.addEventListener('resize', this.onWindowResize.bind(this), false);
+    }
+
+    onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    update(time, deltaTime) {
+        this.inputSystem.update();
+        this.player.update(deltaTime);
+        this.updateCameraPosition();
+        this.player.attack(time);
+        this.gameStateManager.update(time, deltaTime);
+        this.gameStateManager.updateEnemies(deltaTime);
+        this.particleManager.update(deltaTime);
+        this.floatingTextSystem.update();
+        this.physicsSystem.update(deltaTime, [this.player, ...this.gameStateManager.enemies, ...this.gameStateManager.jewels]);
+        this.collisionSystem.update(this.player, this.gameStateManager.enemies, this.particleManager.particles, this.gameStateManager.jewels);
+    }
+
+    updateCameraPosition() {
+        const playerPosition = this.player.getPosition();
+        const playerRotation = this.player.getRotation();
+        
+        // console.log("Player position:", playerPosition);
+        // console.log("Player rotation:", playerRotation);
+
+        if (this.isValidVector(playerPosition) && this.isValidQuaternion(playerRotation)) {
+            const cameraOffset = new THREE.Vector3(0, 3, 8);
+            this.camera.position.copy(playerPosition).add(cameraOffset.applyQuaternion(playerRotation));
+            
+            const targetY = playerPosition.y + (window.innerHeight / 3) * (this.camera.position.y - playerPosition.y) / window.innerHeight;
+            const lookAtPoint = new THREE.Vector3(playerPosition.x, targetY, playerPosition.z);
+            this.camera.lookAt(lookAtPoint);
+
+            // console.log("Updated camera position:", this.camera.position);
+        } else {
+            console.error("Invalid player position or rotation");
+            // Set a default camera position if player data is invalid
+            this.camera.position.set(0, 5, 10);
+            this.camera.lookAt(new THREE.Vector3(0, 0, 0));
+        }
+    }
+
+    addDebugObjects() {
+        // Add a grid helper
+        const gridHelper = new THREE.GridHelper(20, 20);
+        this.scene.add(gridHelper);
+
+        // Add axes helper
+        const axesHelper = new THREE.AxesHelper(5);
+        this.scene.add(axesHelper);
+
+        console.log("Debug objects added to scene");
+    }
+
+    isValidVector(vector) {
+        return vector && !isNaN(vector.x) && !isNaN(vector.y) && !isNaN(vector.z);
+    }
+
+    isValidQuaternion(quaternion) {
+        return quaternion && !isNaN(quaternion.x) && !isNaN(quaternion.y) && !isNaN(quaternion.z) && !isNaN(quaternion.w);
+    }
+
+    render() {
+        this.renderSystem.render();
+    }
+
+    start() {
+        console.log("Starting game loop");
+        console.log("Initial scene children:", this.scene.children);
+
+        let lastTime = 0;
+        const animate = (time) => {
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+
+            this.update(time, deltaTime);
+            this.updateCameraPosition();
+            this.render();
+
+            requestAnimationFrame(animate);
+        };
+        animate(0);
     }
 }
-
-init();
-animate(0);
